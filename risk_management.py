@@ -228,26 +228,24 @@ class _CreditBalance:
                 and self.cfg['contracted_amount'] > 0)
 
     def capacity(self):
-        return self.balance + (self.cfg['contracted_amount'] if self.can_replenish() else 0)
+        return self.balance
 
-    def spend(self, amount):
-        if amount <= 0:
+    def spend(self, amount, eligible=False):
+        if amount <= 0 and not eligible:
             return
-        first_draw = min(amount, self.balance)
-        self.balance = max(0.0, self.balance - first_draw)
-        amount -= first_draw
+        self.balance = max(0.0, self.balance - amount)
+        # Refill after the payout, for use by subsequent events only.
         if self.balance <= 0 and self.can_replenish():
             self.balance = float(self.cfg['contracted_amount'])
             self.used += 1
-        self.balance = max(0.0, self.balance - amount)
 
 
 def apply_strategy(event_catalogue, drm_configs, catalogue_length, first_year=None, fiscal_share=1.0):
     """Evaluate events chronologically, renewing lines at calendar-year boundaries.
 
     CCF/DDO start with initial_balance, renew to contracted_amount, and allow
-    one exhaustion replenishment per period. A replenishment can fund the same
-    event without increasing its requested payout. Loan has inclusive calendar
+    one exhaustion replenishment per period, available from the next event.
+    Each event can draw only its starting balance. Loan has inclusive calendar
     validity and no replenishment. Gross losses determine triggers and contractual
     payouts. Instruments apply
     in configuration order against remaining fiscal loss (loss * fiscal_share).
@@ -301,6 +299,7 @@ def apply_strategy(event_catalogue, drm_configs, catalogue_length, first_year=No
                         0.01 * ccf['Pop_exposed'] * ccf['ccf_person'] / 1e6)
                 for j, cfg in enumerate(drm_configs):
                     kind = cfg['type']
+                    credit_eligible = False
                     if kind == 'insurance':
                         payouts[j] = standard_insurance_payout(
                             [loss], cfg['attachment_point'], cfg['exhaustion_point'],
@@ -309,11 +308,13 @@ def apply_strategy(event_catalogue, drm_configs, catalogue_length, first_year=No
                         threshold = max(cfg['ccf_threshold'],
                                         0.01 * cfg['Pop_exposed'] * cfg['ccf_person'] / 1e6)
                         if loss > threshold:
+                            credit_eligible = remaining > 0
                             requested = (np.exp(0.001074 * np.log(loss * 1000) ** 3.0883
                                                 + 7.9346) * cfg['ccf_person'] / 1e6)
                             payouts[j] = min(requested, states[j].capacity())
                     elif kind == 'ddo':
                         if loss > cfg['ddo_threshold']:
+                            credit_eligible = remaining > 0
                             payouts[j] = min(loss, states[j].capacity())
                     elif kind == 'loan':
                         if cfg['start_year'] <= year <= cfg['end_year'] and loss > cfg['loan_threshold']:
@@ -328,7 +329,7 @@ def apply_strategy(event_catalogue, drm_configs, catalogue_length, first_year=No
                     payouts[j] = min(float(payouts[j]), remaining)
                     remaining = max(0.0, remaining - payouts[j])
                     if j in states:
-                        states[j].spend(float(payouts[j]))
+                        states[j].spend(float(payouts[j]), eligible=credit_eligible)
                 uncovered_annual[y] += remaining
                 annual[:, y] += payouts
                 cursor += 1

@@ -29,8 +29,8 @@ class FiscalTests(unittest.TestCase):
     def test_zero_share_and_no_unnecessary_replenishment(self):
         cfg=ddo(initial_balance=100,contracted_amount=100,first_renewal_year=2029)
         result=self.run_strategy([cfg],[200,200])
-        np.testing.assert_array_equal(result['payout_dfs'][0].values,[[60,60]])
-        np.testing.assert_array_equal(result['balance_dfs']['DDO'].values,[[40,80]])
+        np.testing.assert_array_equal(result['payout_dfs'][0].values,[[60,40]])
+        np.testing.assert_array_equal(result['balance_dfs']['DDO'].values,[[40,100]])
         zero=self.run_strategy([cfg],[200],0)
         self.assertEqual(zero['total_coverage'].iloc[0,0],0)
         self.assertEqual(zero['balance_dfs']['DDO'].iloc[0,0],100)
@@ -53,7 +53,7 @@ class FiscalTests(unittest.TestCase):
     def test_reporting_does_not_scale_payout_twice(self):
         row=strategy_statistics('example',pd.DataFrame([[200]]),pd.DataFrame([[50]]),.3,1)
         self.assertEqual(row['Total 1-year FISCAL uncovered median ($MM)'],10)
-        self.assertEqual(row['Total 1-year FISCAL financing gap median ($MM)'],10)
+        self.assertNotIn('Total 1-year FISCAL financing gap median ($MM)', row)
 
     def test_invalid_factor_and_empty_strategy(self):
         for factor in [-.1,1.1,float('nan'),float('inf')]:

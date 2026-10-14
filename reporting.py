@@ -46,12 +46,13 @@ def strategy_statistics(label, annual_df, coverage_df, resp_fiscal, horizon):
         (annual_df[coverage_df != 0].sum(axis=1) - coverage_df.sum(axis=1)).median(), 1)
     return {
         'Scenario': label,
-        f'Total {horizon}-year FISCAL loss median ($MM)': np.round(fiscal_df.sum(axis=1).median(), 1),
-        f'Total {horizon}-year FISCAL financing gap median ($MM)': np.round(fiscal_uncovered.sum(axis=1).median(), 1),
+        # Optional summary metric; uncomment to include it in the report and CSV.
+        # f'Total {horizon}-year FISCAL financing gap median ($MM)': np.round(fiscal_uncovered.sum(axis=1).median(), 1),
         f'Total {horizon}-year loss median ($MM)': loss_med,
         f'Total {horizon}-year coverage median ($MM)': cov_med,
         f'Total {horizon}-year retention median ($MM)': ret_med,
         f'Total {horizon}-year uncovered median ($MM)': uncov_med,
+        f'Total {horizon}-year FISCAL loss median ($MM)': np.round(fiscal_df.sum(axis=1).median(), 1),
         f'Total {horizon}-year FISCAL retention median ($MM)': np.round(fiscal_df[coverage_df == 0].sum(axis=1).median(), 1),
         f'Total {horizon}-year FISCAL uncovered median ($MM)': np.round(fiscal_uncovered[coverage_df != 0].sum(axis=1).median(), 1),
     }
