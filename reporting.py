@@ -31,11 +31,14 @@ import pandas as pd
 def strategy_statistics(label, annual_df, coverage_df, resp_fiscal, horizon):
     """
     Median totals over the horizon for one scenario (same definitions as the
-    historical statistics CSV of the tool).
+    historical statistics CSV of the tool). Fiscal coverage is subtracted
+    directly from fiscal losses, without scaling payouts again.
 
     retention  : loss in years with no payout at all.
     uncovered  : loss net of payouts in years with some payout.
     """
+    fiscal_df = annual_df * resp_fiscal
+    fiscal_uncovered = (fiscal_df - coverage_df).clip(lower=0)
     loss_med = np.round(annual_df.sum(axis=1).median(), 1)
     cov_med = np.round(coverage_df.sum(axis=1).median(), 1)
     ret_med = np.round(annual_df[coverage_df == 0].sum(axis=1).median(), 1)
@@ -43,12 +46,14 @@ def strategy_statistics(label, annual_df, coverage_df, resp_fiscal, horizon):
         (annual_df[coverage_df != 0].sum(axis=1) - coverage_df.sum(axis=1)).median(), 1)
     return {
         'Scenario': label,
+        f'Total {horizon}-year FISCAL loss median ($MM)': np.round(fiscal_df.sum(axis=1).median(), 1),
+        f'Total {horizon}-year FISCAL financing gap median ($MM)': np.round(fiscal_uncovered.sum(axis=1).median(), 1),
         f'Total {horizon}-year loss median ($MM)': loss_med,
         f'Total {horizon}-year coverage median ($MM)': cov_med,
         f'Total {horizon}-year retention median ($MM)': ret_med,
         f'Total {horizon}-year uncovered median ($MM)': uncov_med,
-        f'Total {horizon}-year FISCAL retention median ($MM)': np.round(resp_fiscal * ret_med, 1),
-        f'Total {horizon}-year FISCAL uncovered median ($MM)': np.round(resp_fiscal * uncov_med, 1),
+        f'Total {horizon}-year FISCAL retention median ($MM)': np.round(fiscal_df[coverage_df == 0].sum(axis=1).median(), 1),
+        f'Total {horizon}-year FISCAL uncovered median ($MM)': np.round(fiscal_uncovered[coverage_df != 0].sum(axis=1).median(), 1),
     }
 
 
@@ -198,8 +203,8 @@ def build_main_report(ctx):
     L += _table(header, rows)
 
     # --- Financing gap ------------------------------------------------------
-    L += _section('FINANCING GAP PROBABILITIES')
-    L.append(f"  Gap = total uncovered loss over the {horizon}-year horizon of each simulation (undiscounted).")
+    L += _section('FISCAL FINANCING GAP PROBABILITIES')
+    L.append(f"  Gap = fiscal loss minus applied payouts over the {horizon}-year horizon of each simulation (undiscounted).")
     L.append(f"  Thresholds are fractions of the maximum loss on the LEC curve ({_money(lec['max_loss'])}).")
     L.append('')
     header = ['P(gap > threshold)'] + [g[0] for g in ctx['gaps']]

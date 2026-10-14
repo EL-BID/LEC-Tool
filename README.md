@@ -263,3 +263,8 @@ saldo. Los archivos `<run_id>_balances_base.csv` y, con DRR,
 `<run_id>_balances_reduced.csv` guardan los saldos al cierre de cada año calendario.
 El año inicial sigue definido por `simulation.first_year` o, si se omite, el
 próximo año según la regla original del código.
+
+
+### Prioridad y responsabilidad fiscal
+
+Los instrumentos se aplican en el orden de los bloques `[[strategy.instruments]]` de `config.toml`. Para cambiar la prioridad, mueve los bloques completos. El orden configurado es préstamo BID → CCF → DDO BM → DDO BID. Los umbrales y fórmulas contractuales usan la pérdida total; cada desembolso se limita a la pérdida fiscal pendiente (`pérdida total × resp_fiscal`) y al saldo disponible. Solo el desembolso aplicado consume saldo. Se conservan renovaciones y reposiciones. El PPO usa la elegibilidad por pérdida total del primer CCF, independientemente de su posición o saldo; su activación única se consume únicamente cuando desembolsa. Los gráficos de cobertura y probabilidades de brecha usan la base fiscal. El CBA conserva `loss_basis` y usa los desembolsos reales sin volver a escalarlos.

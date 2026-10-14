@@ -99,7 +99,7 @@ def simulate(cfg, lec):
 
 def evaluate_strategy(cfg, sim, inputs):
     drm = apply_strategy(sim['event_catalogue'], inputs['drm_configs'], cfg.simulation.catalogue_length,
-                         first_year=cfg.simulation.first_year)
+                         first_year=cfg.simulation.first_year, fiscal_share=cfg.fiscal.resp_fiscal)
     _log('strategy evaluated on the base catalogue')
     return {
         'drm_configs': inputs['drm_configs'],
@@ -118,7 +118,7 @@ def run_risk_reduction(cfg, lec, sim, inputs):
         cfg.simulation.catalogue_length, cfg.simulation.simulation_number,
     )
     drm_red = apply_strategy(reduced['event_catalogue_red'], inputs['drm_configs'],
-                             cfg.simulation.catalogue_length, first_year=cfg.simulation.first_year)
+                             cfg.simulation.catalogue_length, first_year=cfg.simulation.first_year, fiscal_share=cfg.fiscal.resp_fiscal)
     payback = reporting.drr_payback_years(sim['synthetic_annual_df'], reduced['synthetic_annual_red_df'],
                                           rr.investment)
     _log(f"ex-ante risk reduction evaluated: total investment {np.sum(rr.investment):,.1f} $MM, "
@@ -218,7 +218,7 @@ def write_outputs(cfg, inputs, lec, sim, strat, drr, cba, thresholds, out_dir):
     ylim = None
     if cfg.has_instruments:
         fig, ylim = plots.plot_strategy_payouts(
-            sim['synthetic_annual_df'], strat['payout_dfs'], strat['drm_configs'], year_labels, shown,
+            sim['synthetic_annual_df'] * cfg.fiscal.resp_fiscal, strat['payout_dfs'], strat['drm_configs'], year_labels, shown,
             f'{run_id} - catalogue {shown}')
         save(fig, 4, 'strategy_payouts_base')
 
@@ -227,7 +227,7 @@ def write_outputs(cfg, inputs, lec, sim, strat, drr, cba, thresholds, out_dir):
         save(plots.plot_reduced_lec_curves(drr['lec_curves_by_target']), 6, 'reduced_lec_curves')
         if cfg.has_instruments:
             fig, _ = plots.plot_strategy_payouts(
-                drr['synthetic_annual_red_df'], drr['payout_red_dfs'], strat['drm_configs'], year_labels,
+                drr['synthetic_annual_red_df'] * cfg.fiscal.resp_fiscal, drr['payout_red_dfs'], strat['drm_configs'], year_labels,
                 shown, f'{run_id} - reduced catalogue {shown}', ylim=ylim)
             save(fig, 7, 'strategy_payouts_reduced')
 
@@ -243,13 +243,13 @@ def write_outputs(cfg, inputs, lec, sim, strat, drr, cba, thresholds, out_dir):
     scenarios = [('Base catalogue', reporting.strategy_statistics(
         base_label, sim['synthetic_annual_df'], strat['total_coverage'], resp, horizon))]
     gaps = [('Base catalogue', reporting.gap_probabilities(
-        sim['synthetic_annual_df'], strat['total_coverage'], thresholds))]
+        sim['synthetic_annual_df'] * resp, strat['total_coverage'], thresholds))]
     if drr is not None:
         red_label = f'{run_id} - Reduced catalogue (ex-ante)'
         scenarios.append(('Reduced (ex-ante)', reporting.strategy_statistics(
             red_label, drr['synthetic_annual_red_df'], drr['total_coverage_red'], resp, horizon)))
         gaps.append(('Reduced (ex-ante)', reporting.gap_probabilities(
-            drr['synthetic_annual_red_df'], drr['total_coverage_red'], thresholds)))
+            drr['synthetic_annual_red_df'] * resp, drr['total_coverage_red'], thresholds)))
 
     # End-of-year balances, one table per scenario across all simulations.
     balance_scenarios = [('base', strat['balance_dfs'])]

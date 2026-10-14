@@ -140,7 +140,7 @@ def plot_strategy_payouts(annual_df, payout_dfs, drm_configs, year_labels, displ
     payouts = [df.loc[displayed_catalogue].values for df in payout_dfs]
 
     fig, ax = plt.subplots(figsize=(10, 6))
-    ax.bar(year_labels, loss_vals, label='Total losses')
+    ax.bar(year_labels, loss_vals, label='Fiscal losses')
     bottom = np.zeros(len(year_labels))
     for cfg, payout in zip(drm_configs, payouts):
         ax.bar(year_labels, payout, bottom=bottom, label=cfg['name'], hatch='//')
@@ -154,7 +154,7 @@ def plot_strategy_payouts(annual_df, payout_dfs, drm_configs, year_labels, displ
     ax.set_xticks(year_labels)
     ax.set_xticklabels(year_labels)
     ax.set_xlabel('Year')
-    ax.set_ylabel('Simulated annual economic loss ($MM)')
+    ax.set_ylabel('Simulated annual fiscal loss ($MM)')
     ax.set_title(title)
     ax.legend()
     fig.tight_layout()

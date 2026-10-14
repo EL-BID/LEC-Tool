@@ -242,19 +242,24 @@ class _CreditBalance:
         self.balance = max(0.0, self.balance - amount)
 
 
-def apply_strategy(event_catalogue, drm_configs, catalogue_length, first_year=None):
+def apply_strategy(event_catalogue, drm_configs, catalogue_length, first_year=None, fiscal_share=1.0):
     """Evaluate events chronologically, renewing lines at calendar-year boundaries.
 
     CCF/DDO start with initial_balance, renew to contracted_amount, and allow
     one exhaustion replenishment per period. A replenishment can fund the same
     event without increasing its requested payout. Loan has inclusive calendar
-    validity and no replenishment. Balances consume only final, proportionally
-    capped payouts. Each simulation owns fresh independent instrument balances.
+    validity and no replenishment. Gross losses determine triggers and contractual
+    payouts. Instruments apply
+    in configuration order against remaining fiscal loss (loss * fiscal_share).
+    Balances consume only actual payouts. Each simulation owns independent balances.
 
     balance_dfs maps line names to end-of-year balances (including renewals in
-    years without events). Existing payout_dfs/total_coverage outputs are unchanged.
+    years without events). payout_dfs/total_coverage retain their existing format.
+    fiscal_loss and fiscal_uncovered contain annual fiscal losses and residuals.
     The standalone coverage functions above retain their original APIs.
     """
+    if not np.isfinite(fiscal_share) or not 0 <= fiscal_share <= 1:
+        raise ValueError("fiscal_share must be finite and between 0 and 1.")
     if first_year is None:
         from datetime import datetime
         first_year = datetime.now().year + 1
@@ -266,12 +271,16 @@ def apply_strategy(event_catalogue, drm_configs, catalogue_length, first_year=No
     if any(cfg['type'] == 'ppo' for cfg in drm_configs) and not ccf_indices:
         raise ValueError("PPO requires a CCF in the same strategy.")
 
+    fiscal_loss_lists = []
+    fiscal_uncovered_lists = []
     for catalogue in event_catalogue:
         times = np.asarray(catalogue['times'])
         losses = np.asarray(catalogue['losses'])
         states = {j: _CreditBalance(cfg, first_year) for j, cfg in enumerate(drm_configs)
                   if cfg['type'] in ('ccf', 'ddo', 'loan')}
         ppo_used = set()
+        fiscal_annual = np.zeros(catalogue_length)
+        uncovered_annual = np.zeros(catalogue_length)
         annual = np.zeros((len(drm_configs), catalogue_length))
         balances = {j: [] for j in states}
         cursor = 0
@@ -281,7 +290,15 @@ def apply_strategy(event_catalogue, drm_configs, catalogue_length, first_year=No
                 state.renew(year)
             while cursor < len(times) and times[cursor] < y + 1:
                 loss = float(losses[cursor])
+                remaining = loss * fiscal_share
+                fiscal_annual[y] += remaining
                 payouts = np.zeros(len(drm_configs))
+                # PPO eligibility follows gross CCF thresholds, independent of priority.
+                ccf_eligible = False
+                if ccf_indices:
+                    ccf = drm_configs[ccf_indices[0]]
+                    ccf_eligible = loss > max(ccf['ccf_threshold'],
+                        0.01 * ccf['Pop_exposed'] * ccf['ccf_person'] / 1e6)
                 for j, cfg in enumerate(drm_configs):
                     kind = cfg['type']
                     if kind == 'insurance':
@@ -301,22 +318,24 @@ def apply_strategy(event_catalogue, drm_configs, catalogue_length, first_year=No
                     elif kind == 'loan':
                         if cfg['start_year'] <= year <= cfg['end_year'] and loss > cfg['loan_threshold']:
                             payouts[j] = min(loss, states[j].balance)
-                    elif kind != 'ppo':
+                    elif kind == 'ppo':
+                        if j not in ppo_used and ccf_eligible and remaining > 0:
+                            payouts[j] = cfg['ppo_schedule'][y]
+                            if payouts[j] > 0:
+                                ppo_used.add(j)
+                    else:
                         raise ValueError(f"Unknown instrument type '{kind}'.")
-                # PPO activation remains tied to the first CCF, independent of list order.
-                for j, cfg in enumerate(drm_configs):
-                    if cfg['type'] == 'ppo' and j not in ppo_used and payouts[ccf_indices[0]] > 0:
-                        payouts[j] = cfg['ppo_schedule'][y]
-                        ppo_used.add(j)
-                total = payouts.sum()
-                if total > loss:
-                    payouts *= loss / total
-                for j, state in states.items():
-                    state.spend(float(payouts[j]))
+                    payouts[j] = min(float(payouts[j]), remaining)
+                    remaining = max(0.0, remaining - payouts[j])
+                    if j in states:
+                        states[j].spend(float(payouts[j]))
+                uncovered_annual[y] += remaining
                 annual[:, y] += payouts
                 cursor += 1
             for j, state in states.items():
                 balances[j].append(state.balance)
+        fiscal_loss_lists.append(fiscal_annual)
+        fiscal_uncovered_lists.append(uncovered_annual)
         for j in range(len(drm_configs)):
             payout_lists[j].append(annual[j])
         for j in states:
@@ -328,6 +347,8 @@ def apply_strategy(event_catalogue, drm_configs, catalogue_length, first_year=No
     return {
         'payout_dfs': payout_dfs,
         'total_coverage': total_coverage,
+        'fiscal_loss': pd.DataFrame(fiscal_loss_lists, columns=columns),
+        'fiscal_uncovered': pd.DataFrame(fiscal_uncovered_lists, columns=columns),
         'balance_dfs': {name: pd.DataFrame(rows, columns=columns)
                         for name, rows in balance_lists.items()},
     }

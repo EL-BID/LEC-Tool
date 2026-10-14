@@ -45,8 +45,8 @@ class CreditTests(unittest.TestCase):
         b = ddo(name='b', initial_balance=100, max_replenishments_per_period=0)
         r = run([a,b], [.1], [150])
         self.assertEqual(r['total_coverage'].iloc[0,0], 150)
-        self.assertEqual(r['balance_dfs']['a'].iloc[0,0], 25)
-        self.assertEqual(r['balance_dfs']['b'].iloc[0,0], 25)
+        self.assertEqual(r['balance_dfs']['a'].iloc[0,0], 0)
+        self.assertEqual(r['balance_dfs']['b'].iloc[0,0], 50)
 
     def test_strict_ddo_threshold_and_no_refill_per_event(self):
         r = run([ddo()], [.1,.2,.3], [100,200,200])
@@ -122,12 +122,12 @@ class CreditTests(unittest.TestCase):
         self.assertEqual(same_year['payout_dfs'][0].iloc[0,0],200)
         self.assertEqual(same_year['balance_dfs']['DDO'].iloc[0,0],0)
 
-    def test_scaled_payout_does_not_prematurely_replenish(self):
+    def test_priority_consumes_only_first_line_and_replenishes_on_exhaustion(self):
         a=ddo(name='a',initial_balance=100,contracted_amount=100)
         b=ddo(name='b',initial_balance=100,contracted_amount=100)
         r=run([a,b],[.1],[150])
-        self.assertEqual(r['balance_dfs']['a'].iloc[0,0],25)
-        self.assertEqual(r['balance_dfs']['b'].iloc[0,0],25)
+        self.assertEqual(r['balance_dfs']['a'].iloc[0,0],50)
+        self.assertEqual(r['balance_dfs']['b'].iloc[0,0],100)
 
     def test_ccf_replenishment_can_fund_same_disaster(self):
         cfg=dict(name='CCF',type='ccf',ccf_threshold=100,ccf_person=1500,
