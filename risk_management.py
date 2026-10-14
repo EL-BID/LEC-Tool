@@ -25,7 +25,7 @@ apply_strategy  Apply a set of DRM instruments to every simulation in a catalogu
 
 import numpy as np
 import pandas as pd
-from utils import aggregate_event_values_by_year
+from utils import aggregate_event_values_by_year, validate_insurance_layer
 
 
 # ---------------------------------------------------------------------------
@@ -63,6 +63,7 @@ def standard_insurance_payout(values, attachment_point=15, exhaustion_point=50,
     ...                            exhaustion_point=80, ceding_percentage=1.0)
     [0, 10, 60]
     """
+    validate_insurance_layer(attachment_point, exhaustion_point, ceding_percentage)
     payouts = []
     for loss in values:
         if loss <= attachment_point:
@@ -176,42 +177,21 @@ def ccf_coverage(values, ccf_maximum, ccf_person, Pop_exposed):
     return ccf_applied
 
 
-def ddo_coverage(values, ddo_threshold, ddo_available):
+def ddo_coverage(values, ddo_threshold, initial_balance):
+    """Draw eligible event losses from an initial balance, without a per-event cap.
+
+    This standalone helper has no renewal schedule. apply_strategy handles
+    calendar renewals, exhaustion replenishments and the combined payout cap.
+
+    >>> ddo_coverage([50, 130, 20, 200], ddo_threshold=100, initial_balance=300)
+    [0.0, 130, 0.0, 170]
     """
-    Apply a Deferred Drawdown Option (DDO) to a sequence of event losses.
-
-    Triggers on every event whose loss exceeds ``ddo_threshold`` and pays a
-    fixed amount ``ddo_available``.  Unlike the PPO, the DDO resets each event
-    (no single-activation limit).  A local cap ensures the payout for any
-    single event never exceeds the event loss itself; the broader constraint
-    that the *sum* of all instrument payouts cannot exceed the gross loss is
-    enforced by ``apply_strategy``.
-
-    Parameters
-    ----------
-    values : array_like
-        Event loss amounts ($MM), in chronological order.
-    ddo_threshold : float
-        Loss level ($MM) that must be exceeded to trigger the DDO.
-    ddo_available : float
-        Fixed DDO payout ($MM) issued each time the trigger is met.
-
-    Returns
-    -------
-    list of float
-        DDO payout for each event ($MM).  Same length as *values*.
-
-    Examples
-    --------
-    >>> ddo_coverage([50, 130, 20, 200], ddo_threshold=100, ddo_available=110)
-    [0.0, 110.0, 0.0, 110.0]
-    """
+    remaining = initial_balance
     applied = []
     for loss in values:
-        if loss > ddo_threshold:
-            applied.append(min(ddo_available, loss))
-        else:
-            applied.append(0.0)
+        payout = min(loss, remaining) if loss > ddo_threshold else 0.0
+        applied.append(payout)
+        remaining -= payout
     return applied
 
 
@@ -219,178 +199,135 @@ def ddo_coverage(values, ddo_threshold, ddo_available):
 # Strategy pipeline
 # ---------------------------------------------------------------------------
 
-def apply_strategy(event_catalogue, drm_configs, catalogue_length):
+class _CreditBalance:
+    """Independent balance and renewal schedule for one line in one simulation."""
+
+    def __init__(self, cfg, first_year):
+        self.cfg = cfg
+        self.balance = float(cfg['initial_balance'])
+        self.used = 0
+        self.next_renewal = cfg.get('first_renewal_year')
+        if self.next_renewal is not None and self.next_renewal < first_year:
+            # Preserve the supplied starting balance; historical dates only anchor the schedule.
+            interval = cfg['renewal_interval_years']
+            self.next_renewal += ((first_year - self.next_renewal + interval - 1)
+                                  // interval) * interval
+
+    def renew(self, year):
+        if self.next_renewal is not None and year >= self.next_renewal:
+            # Advance even across years without disasters; overwrite partial balances.
+            interval = self.cfg['renewal_interval_years']
+            elapsed = (year - self.next_renewal) // interval + 1
+            self.next_renewal += elapsed * interval
+            self.balance = float(self.cfg['contracted_amount'])
+            self.used = 0
+
+    def can_replenish(self):
+        return (self.next_renewal is not None
+                and self.used < self.cfg['max_replenishments_per_period']
+                and self.cfg['contracted_amount'] > 0)
+
+    def capacity(self):
+        return self.balance + (self.cfg['contracted_amount'] if self.can_replenish() else 0)
+
+    def spend(self, amount):
+        if amount <= 0:
+            return
+        first_draw = min(amount, self.balance)
+        self.balance = max(0.0, self.balance - first_draw)
+        amount -= first_draw
+        if self.balance <= 0 and self.can_replenish():
+            self.balance = float(self.cfg['contracted_amount'])
+            self.used += 1
+        self.balance = max(0.0, self.balance - amount)
+
+
+def apply_strategy(event_catalogue, drm_configs, catalogue_length, first_year=None):
+    """Evaluate events chronologically, renewing lines at calendar-year boundaries.
+
+    CCF/DDO start with initial_balance, renew to contracted_amount, and allow
+    one exhaustion replenishment per period. A replenishment can fund the same
+    event without increasing its requested payout. Loan has inclusive calendar
+    validity and no replenishment. Balances consume only final, proportionally
+    capped payouts. Each simulation owns fresh independent instrument balances.
+
+    balance_dfs maps line names to end-of-year balances (including renewals in
+    years without events). Existing payout_dfs/total_coverage outputs are unchanged.
+    The standalone coverage functions above retain their original APIs.
     """
-    Apply a combination of DRM instruments to every simulation in a catalogue.
+    if first_year is None:
+        from datetime import datetime
+        first_year = datetime.now().year + 1
+    columns = [f'Year_{i + 1}' for i in range(catalogue_length)]
+    payout_lists = [[] for _ in drm_configs]
+    balance_lists = {cfg['name']: [] for cfg in drm_configs
+                     if cfg['type'] in ('ccf', 'ddo', 'loan')}
+    ccf_indices = [j for j, cfg in enumerate(drm_configs) if cfg['type'] == 'ccf']
+    if any(cfg['type'] == 'ppo' for cfg in drm_configs) and not ccf_indices:
+        raise ValueError("PPO requires a CCF in the same strategy.")
 
-    Iterates over all simulations, applies each configured instrument
-    event-by-event in chronological order, then aggregates payouts to
-    annual totals.
+    for catalogue in event_catalogue:
+        times = np.asarray(catalogue['times'])
+        losses = np.asarray(catalogue['losses'])
+        states = {j: _CreditBalance(cfg, first_year) for j, cfg in enumerate(drm_configs)
+                  if cfg['type'] in ('ccf', 'ddo', 'loan')}
+        ppo_used = set()
+        annual = np.zeros((len(drm_configs), catalogue_length))
+        balances = {j: [] for j in states}
+        cursor = 0
+        for y in range(catalogue_length):
+            year = first_year + y
+            for state in states.values():
+                state.renew(year)
+            while cursor < len(times) and times[cursor] < y + 1:
+                loss = float(losses[cursor])
+                payouts = np.zeros(len(drm_configs))
+                for j, cfg in enumerate(drm_configs):
+                    kind = cfg['type']
+                    if kind == 'insurance':
+                        payouts[j] = standard_insurance_payout(
+                            [loss], cfg['attachment_point'], cfg['exhaustion_point'],
+                            cfg['ceding_percentage'])[0]
+                    elif kind == 'ccf':
+                        threshold = max(cfg['ccf_threshold'],
+                                        0.01 * cfg['Pop_exposed'] * cfg['ccf_person'] / 1e6)
+                        if loss > threshold:
+                            requested = (np.exp(0.001074 * np.log(loss * 1000) ** 3.0883
+                                                + 7.9346) * cfg['ccf_person'] / 1e6)
+                            payouts[j] = min(requested, states[j].capacity())
+                    elif kind == 'ddo':
+                        if loss > cfg['ddo_threshold']:
+                            payouts[j] = min(loss, states[j].capacity())
+                    elif kind == 'loan':
+                        if cfg['start_year'] <= year <= cfg['end_year'] and loss > cfg['loan_threshold']:
+                            payouts[j] = min(loss, states[j].balance)
+                    elif kind != 'ppo':
+                        raise ValueError(f"Unknown instrument type '{kind}'.")
+                # PPO activation remains tied to the first CCF, independent of list order.
+                for j, cfg in enumerate(drm_configs):
+                    if cfg['type'] == 'ppo' and j not in ppo_used and payouts[ccf_indices[0]] > 0:
+                        payouts[j] = cfg['ppo_schedule'][y]
+                        ppo_used.add(j)
+                total = payouts.sum()
+                if total > loss:
+                    payouts *= loss / total
+                for j, state in states.items():
+                    state.spend(float(payouts[j]))
+                annual[:, y] += payouts
+                cursor += 1
+            for j, state in states.items():
+                balances[j].append(state.balance)
+        for j in range(len(drm_configs)):
+            payout_lists[j].append(annual[j])
+        for j in states:
+            balance_lists[drm_configs[j]['name']].append(balances[j])
 
-    Parameters
-    ----------
-    event_catalogue : list of dicts, length simulation_number
-        As returned by ``simulation.generate_synthetic_catalogue`` in the
-        'event_catalogue' key.  Each element has:
-          - 'times'  : ndarray of fractional event times.
-          - 'losses' : ndarray of event-level losses ($MM).
-
-    drm_configs : list of dicts
-        One dict per instrument, evaluated in list order.  Each dict must
-        contain a key 'type' selecting the instrument, plus instrument-
-        specific parameters:
-
-        type 'insurance':
-          attachment_point    float  ($MM)
-          exhaustion_point    float  ($MM)
-          ceding_percentage   float  (0–1)
-
-        type 'ppo':
-          ppo_schedule        list of float, length catalogue_length
-              Available PPO payout for each year index ($MM).
-          ppo_loss_trigger    float  ($MM)
-
-        type 'ccf':
-          ccf_maximum         float  ($MM)
-          ccf_person          float  ($ per person)
-          Pop_exposed         float  (number of people)
-
-        type 'ddo':
-          ddo_threshold       float  ($MM)
-          ddo_available       float  ($MM)
-
-    catalogue_length : int
-        Number of years per simulation.  Must match the catalogue.
-
-    Returns
-    -------
-    dict with the following keys:
-
-    payout_dfs     list of pandas.DataFrame
-        payout_dfs[j] is a DataFrame of shape (simulation_number, catalogue_length)
-        with annual payouts from instrument j.  Column names: Year_1 … Year_N.
-        One entry per element in *drm_configs*.
-
-    total_coverage   pandas.DataFrame, shape (simulation_number, catalogue_length)
-        Sum of all instrument payouts per year per simulation.
-
-    Notes
-    -----
-    For the PPO instrument, *ppo_schedule* is indexed by calendar year
-    within the catalogue (year 0 = first year).  The available amount for
-    each event is looked up from the year the event falls in.
-
-    Instruments are independent: each sees the original gross loss, not the
-    loss net of prior instruments.  After all per-event payouts are computed,
-    a proportional cap is applied so that the total payout for any single event
-    never exceeds the gross event loss.  The strategy net loss is therefore:
-        net_loss = gross_loss − total_coverage  (≥ 0 by construction)
-    """
-    simulation_number = len(event_catalogue)
-    column_names = [f'Year_{i + 1}' for i in range(catalogue_length)]
-
-    n_instruments = len(drm_configs)
-    payout_lists = [[] for _ in range(n_instruments)]
-
-    for i in range(simulation_number):
-        times_i = event_catalogue[i]['times']
-        losses_i = event_catalogue[i]['losses']
-        loss_list = losses_i.tolist()
-        
-        # --- Compute CCF once per simulation if it exists ---
-        ccf_trigger = None
-        ccf_cfg = next((cfg for cfg in drm_configs if cfg['type'] == 'ccf'), None)
-
-        if ccf_cfg is not None:
-            ccf_trigger = np.array(ccf_coverage(
-                loss_list,
-                ccf_maximum=ccf_cfg['ccf_maximum'],
-                ccf_person=ccf_cfg['ccf_person'],
-                Pop_exposed=ccf_cfg['Pop_exposed'],
-            ))
-            
-        # --- compute per-event payouts for every instrument ---
-        event_payouts = []
-        for cfg in drm_configs:
-            instrument_type = cfg['type']
-
-            if instrument_type == 'insurance':
-                p = np.array(standard_insurance_payout(
-                    loss_list,
-                    attachment_point=cfg['attachment_point'],
-                    exhaustion_point=cfg['exhaustion_point'],
-                    ceding_percentage=cfg['ceding_percentage'],
-                ))
-
-            elif instrument_type == 'ppo':
-                if ccf_trigger is None:
-                    raise ValueError(
-                        "PPO depends on CCF activation, but no 'ccf' "
-                        "configuration was found in drm_configs."
-                    )
-
-                if len(times_i) == 0:
-                    p = np.array([])
-                else:
-                    event_years = np.floor(times_i).astype(int)
-                    schedule = cfg['ppo_schedule']
-
-                    ppo_available_event = [
-                        schedule[y] if 0 <= y < len(schedule) else 0.0
-                        for y in event_years
-                    ]
-
-                    p = np.array(apply_ppo_coverage(
-                        loss_list,
-                        ppo_available=ppo_available_event,
-                        ccf_applied=ccf_trigger,
-                    ))
-
-            elif instrument_type == 'ccf':
-                p = ccf_trigger.copy()
-
-            elif instrument_type == 'ddo':
-                p = np.array(ddo_coverage(
-                    loss_list,
-                    ddo_threshold=cfg['ddo_threshold'],
-                    ddo_available=cfg['ddo_available'],
-                ))
-
-            else:
-                raise ValueError(
-                    f"Unknown instrument type '{instrument_type}'. "
-                    "Supported: 'insurance', 'ppo', 'ccf', 'ddo'."
-                )
-
-            event_payouts.append(p)
-
-        # --- cap total per-event payout to gross event loss ---
-        if len(losses_i) > 0 and n_instruments > 0:
-            total_p = sum(event_payouts)
-            # scale factor per event: 1.0 where total ≤ loss, < 1.0 otherwise
-            scale = np.minimum(np.divide(losses_i, total_p, out=np.ones_like(losses_i, dtype=float), where=total_p > 0), 1.0)
-            event_payouts = [p * scale for p in event_payouts]
-
-        # --- aggregate each instrument's payouts to annual totals ---
-        for j, p in enumerate(event_payouts):
-            payout_lists[j].append(
-                aggregate_event_values_by_year(times_i, p, catalogue_length)
-            )
-
-    payout_dfs = [
-        pd.DataFrame(payout_lists[j], columns=column_names)
-        for j in range(n_instruments)
-    ]
-
-    if payout_dfs:
-        total_coverage = sum(payout_dfs)
-    else:
-        # No instruments: coverage is identically zero (sum([]) would be the int 0).
-        total_coverage = pd.DataFrame(
-            np.zeros((simulation_number, catalogue_length)), columns=column_names
-        )
-
+    payout_dfs = [pd.DataFrame(rows, columns=columns) for rows in payout_lists]
+    total_coverage = (sum(payout_dfs) if payout_dfs else
+                      pd.DataFrame(np.zeros((len(event_catalogue), catalogue_length)), columns=columns))
     return {
         'payout_dfs': payout_dfs,
         'total_coverage': total_coverage,
+        'balance_dfs': {name: pd.DataFrame(rows, columns=columns)
+                        for name, rows in balance_lists.items()},
     }

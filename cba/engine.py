@@ -67,6 +67,7 @@ def _get_cost_function(instrument_type: str):
         'ppo': ppo_annual_costs,
         'ccf': ccf_annual_costs,
         'ddo': ddo_annual_costs,
+        'loan': ddo_annual_costs,
     }
     if instrument_type not in mapping:
         raise ValueError(
@@ -106,7 +107,7 @@ def _build_instrument_config(drm_cfg: dict, cba_config: LECCBAConfig):
 
     # v6 renamed 'interest_rate' -> 'loan_interest_rate'. Stop here rather than
     # silently falling back to the default rate for a loan-type instrument.
-    if itype in ('ppo', 'ccf', 'ddo') and 'interest_rate' in drm_cfg:
+    if itype in ('ppo', 'ccf', 'ddo', 'loan') and 'interest_rate' in drm_cfg:
         raise ValueError(
             f"Instrument '{drm_cfg.get('name', itype)}': the key 'interest_rate' "
             f"is no longer supported. Use 'loan_interest_rate' (contractual loan "
@@ -123,6 +124,8 @@ def _build_instrument_config(drm_cfg: dict, cba_config: LECCBAConfig):
         for attr in ('rate_on_line', 'premium'):
             if attr in drm_cfg:
                 setattr(base, attr, float(drm_cfg[attr]))
+        # Validate the merged layer: copying defaults does not invoke __post_init__.
+        base.__post_init__()
         # Recompute premium if not explicitly set
         if 'premium' not in drm_cfg:
             coverage = (base.exhaustion_point - base.attachment_point) * base.ceding_percentage
@@ -145,6 +148,9 @@ def _build_instrument_config(drm_cfg: dict, cba_config: LECCBAConfig):
 
     elif itype == 'ccf':
         base = copy.copy(cba_config.ccf)
+        base.ccf_maximum = drm_cfg['contracted_amount']
+        base.ccf_person = drm_cfg['ccf_person']
+        base.pop_exposed = drm_cfg['Pop_exposed']
         for attr in ('drawdown_fee_rate', 'loan_interest_rate'):
             if attr in drm_cfg:
                 setattr(base, attr, float(drm_cfg[attr]))
@@ -163,16 +169,14 @@ def _build_instrument_config(drm_cfg: dict, cba_config: LECCBAConfig):
             )
         return base
 
-    elif itype == 'ddo':
-        base = copy.copy(cba_config.ddo)
+    elif itype in ('ddo', 'loan'):
+        base = copy.copy(getattr(cba_config, itype))
         if 'loan_interest_rate' in drm_cfg:
             base.loan_interest_rate = float(drm_cfg['loan_interest_rate'])
         if 'repayment_years' in drm_cfg:
             base.repayment_years = int(drm_cfg['repayment_years'])
         if 'ddo_threshold' in drm_cfg:
             base.ddo_threshold = float(drm_cfg['ddo_threshold'])
-        if 'ddo_available' in drm_cfg:
-            base.ddo_available = float(drm_cfg['ddo_available'])
         return base
 
     else:
@@ -250,6 +254,11 @@ def run_cba(
     for j, drm_cfg in enumerate(drm_configs):
         inst_name = instrument_names[j]
         instrument_configs[inst_name] = _build_instrument_config(drm_cfg, cba_config)
+        for key in ('initial_balance', 'contracted_amount', 'first_renewal_year',
+                    'renewal_interval_years', 'max_replenishments_per_period',
+                    'ccf_threshold', 'loan_threshold', 'start_year', 'end_year'):
+            if key in drm_cfg:
+                setattr(instrument_configs[inst_name], key, drm_cfg[key])
 
     results.resolved_instrument_configs = instrument_configs
     results.instrument_types = {

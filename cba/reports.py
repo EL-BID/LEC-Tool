@@ -59,7 +59,8 @@ def _format_config_summary(results) -> str:
         elif itype == 'ccf':
             lines += [
                 f"--- {inst_name} (Contingent Credit — recurrent) ---",
-                f"  Total facility: ${inst_cfg.ccf_maximum:.0f}M (cumulative cap)",
+                f"  Contracted facility: ${inst_cfg.ccf_maximum:.0f}M",
+                f"  Emergency threshold: ${inst_cfg.ccf_threshold:.0f}M",
                 f"  Per person: ${inst_cfg.ccf_person:,.0f}",
                 f"  Pop exposed: {inst_cfg.pop_exposed/1e6:.2f}M",
                 f"  Drawdown fee: {inst_cfg.drawdown_fee_rate:.2%}",
@@ -70,18 +71,26 @@ def _format_config_summary(results) -> str:
                 "",
             ]
 
-        elif itype == 'ddo':
-            block = [f"--- {inst_name} (Deferred Drawdown Option — recurrent) ---"]
+        elif itype in ('ddo', 'loan'):
+            block = [f"--- {inst_name} ({'Loan' if itype == 'loan' else 'Deferred Drawdown Option'}) ---"]
+            if itype == 'loan':
+                block += [f"  Trigger: ${inst_cfg.loan_threshold:.0f}M loss",
+                          f"  Active years: {inst_cfg.start_year}-{inst_cfg.end_year} (inclusive)"]
             if inst_cfg.ddo_threshold is not None:
                 block.append(f"  Trigger: ${inst_cfg.ddo_threshold:.0f}M loss")
-            if inst_cfg.ddo_available is not None:
-                block.append(f"  Payout per activation: ${inst_cfg.ddo_available:.0f}M")
             block += [
                 f"  Loan interest rate: {inst_cfg.loan_interest_rate:.1%}",
                 f"  Repayment: {inst_cfg.repayment_years} years",
                 "",
             ]
             lines += block
+
+        if itype in ('ccf', 'ddo', 'loan'):
+            lines.append(f"  Initial balance: ${inst_cfg.initial_balance:.0f}M")
+        if itype in ('ccf', 'ddo'):
+            lines += [f"  Contracted amount: ${inst_cfg.contracted_amount:.0f}M",
+                      f"  First renewal: {inst_cfg.first_renewal_year}; interval: {inst_cfg.renewal_interval_years} years",
+                      f"  Exhaustion replenishments per period: {inst_cfg.max_replenishments_per_period}"]
 
     lines.append("=" * 60)
     return "\n".join(lines)

@@ -88,3 +88,20 @@ def compute_aal(loss, rate):
     loss = np.asarray(loss, dtype=float)
     rate = np.asarray(rate, dtype=float)
     return (abs(np.trapezoid(rate, loss)) + abs(np.trapezoid(loss, rate))) / 2
+
+def validate_insurance_layer(attachment_point, exhaustion_point, ceding_percentage):
+    """Reject invalid layers before payout or premium calculations."""
+    import math
+    from numbers import Real
+
+    for name, value in (('attachment_point', attachment_point),
+                        ('exhaustion_point', exhaustion_point),
+                        ('ceding_percentage', ceding_percentage)):
+        if isinstance(value, bool) or not isinstance(value, Real) or not math.isfinite(value):
+            raise ValueError(f"Insurance '{name}' must be a finite number.")
+    if attachment_point < 0:
+        raise ValueError("Insurance 'attachment_point' must be >= 0.")
+    if exhaustion_point <= attachment_point:
+        raise ValueError("Insurance 'exhaustion_point' must be greater than 'attachment_point'.")
+    if not 0 <= ceding_percentage <= 1:
+        raise ValueError("Insurance 'ceding_percentage' must be between 0 and 1.")

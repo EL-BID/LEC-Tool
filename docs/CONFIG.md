@@ -62,7 +62,7 @@ Claves comunes:
 | Clave | Tipo | Descripción |
 | --- | --- | --- |
 | `name` | texto | Etiqueta del instrumento en figuras y reportes |
-| `type` | `"insurance"`, `"ppo"`, `"ccf"`, `"ddo"` | Tipo de instrumento |
+| `type` | `"insurance"`, `"ppo"`, `"ccf"`, `"ddo"`, `"loan"` | Tipo de instrumento |
 
 Parámetros de pago por tipo (obligatorios):
 
@@ -70,8 +70,8 @@ Parámetros de pago por tipo (obligatorios):
 | --- | --- | --- |
 | `insurance` | `attachment_point`, `exhaustion_point`, `ceding_percentage` | Capa [attachment, exhaustion] en $MM y proporción cedida (0-1) |
 | `ppo` | (ninguna) | El calendario de disponibilidad se lee de `inputs.ppo_schedule_file` |
-| `ccf` | `ccf_maximum`, `ccf_person`, `Pop_exposed` | Techo total ($MM), pago por persona afectada ($) y población expuesta |
-| `ddo` | `ddo_threshold`, `ddo_available` | Pérdida que activa el desembolso y pago fijo por activación ($MM) |
+| `ccf` | `ccf_threshold`, `ccf_person`, `Pop_exposed` + parámetros de saldo y renovación | Umbral de emergencia ($MM), pago por persona afectada ($) y población expuesta |
+| `ddo` | `ddo_threshold` + parámetros de saldo y renovación | Pérdida que activa el desembolso ($MM); cobertura limitada al saldo disponible |
 
 Parámetros de costo opcionales (solo usados por el CBA; sobreescriben `[cba.defaults.<type>]` para ese instrumento):
 
@@ -125,3 +125,43 @@ Costo Neto Comparado. Si la tabla se omite, el CNC no se calcula.
 ## Validaciones
 
 `config_loader.py` detiene la corrida con un mensaje que indica la sección y la clave cuando: falta una clave obligatoria; un valor está fuera de rango; los vectores de la DRR o el calendario PPO no tienen `catalogue_length` valores; `displayed_catalogue` no es menor que `simulation_number`; un instrumento tiene tipo desconocido, nombre repetido o le falta un parámetro de pago; hay un `ppo` sin `ccf`; un archivo de entrada requerido no existe.
+
+
+### Saldos y renovaciones de CCF, DDO y loan
+
+Los CCF y DDO requieren `initial_balance`, `contracted_amount`,
+`first_renewal_year`, `renewal_interval_years` y `max_replenishments_per_period`.
+`first_renewal_year` es un año calendario. Si es anterior al inicio de la
+simulación, se usa para ubicar la siguiente renovación del calendario,
+conservando el saldo inicial hasta esa fecha. La renovación ocurre al inicio de ese año, antes de los eventos,
+y se repite cada `renewal_interval_years` (CCF: 5; DDO: 3). Restaura el saldo a
+`contracted_amount`, incluso con saldo parcial y sin desastres, y reinicia el
+contador de reposiciones. Antes de la primera renovación se usa `initial_balance`.
+
+Con `max_replenishments_per_period = 1`, al agotarse el saldo se permite una
+reposición al monto contratado por período, incluido el período inicial.
+Si un desastre agota el saldo, la reposición permitida puede completar el pago
+de ese mismo evento, sin aumentar su desembolso solicitado. También puede
+utilizarse con saldo inicial cero, siempre que quede una reposición permitida.
+Un segundo agotamiento debe esperar a la renovación automática. La reposición
+no mueve las fechas de renovación. Se admite 0 para desactivar la reposición.
+
+CCF activa con pérdida estrictamente mayor que
+`max(ccf_threshold, 0.01 * Pop_exposed * ccf_person / 1e6)` y mantiene la fórmula
+por personas afectadas. `contracted_amount` reemplaza el antiguo `ccf_maximum`.
+DDO activa con pérdida estrictamente mayor que `ddo_threshold` y solicita
+`min(pérdida, saldo + reposición permitida)`, sin límite adicional por desastre.
+
+`loan` requiere `loan_threshold`, `initial_balance`, `start_year` y `end_year`.
+No se repone ni renueva. Los años de vigencia son inclusivos. En cada evento
+elegible solicita `min(pérdida, saldo)`. Su costo se calcula con el modelo de
+servicio de deuda existente del DDO; `loan_interest_rate` y `repayment_years`
+pueden definirse por instrumento o en `[cba.defaults.loan]`. Si se omiten,
+son 0.035 y 5 respectivamente; deben ajustarse al contrato real.
+
+Todos los saldos descuentan únicamente desembolsos efectivos después de aplicar
+el límite conjunto por desastre. Cada instrumento y simulación tiene su propio
+saldo. Los archivos `<run_id>_balances_base.csv` y, con DRR,
+`<run_id>_balances_reduced.csv` guardan los saldos al cierre de cada año calendario.
+El año inicial sigue definido por `simulation.first_year` o, si se omite, el
+próximo año según la regla original del código.

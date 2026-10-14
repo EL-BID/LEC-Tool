@@ -34,6 +34,7 @@ import shutil
 import sys
 
 import numpy as np
+import pandas as pd
 
 from config_loader import (
     load_config, load_input_data, build_drm_configs, build_cba_config, ConfigError,
@@ -97,12 +98,14 @@ def simulate(cfg, lec):
 
 
 def evaluate_strategy(cfg, sim, inputs):
-    drm = apply_strategy(sim['event_catalogue'], inputs['drm_configs'], cfg.simulation.catalogue_length)
+    drm = apply_strategy(sim['event_catalogue'], inputs['drm_configs'], cfg.simulation.catalogue_length,
+                         first_year=cfg.simulation.first_year)
     _log('strategy evaluated on the base catalogue')
     return {
         'drm_configs': inputs['drm_configs'],
         'payout_dfs': drm['payout_dfs'],
         'total_coverage': drm['total_coverage'],
+        'balance_dfs': drm['balance_dfs'],
     }
 
 
@@ -115,7 +118,7 @@ def run_risk_reduction(cfg, lec, sim, inputs):
         cfg.simulation.catalogue_length, cfg.simulation.simulation_number,
     )
     drm_red = apply_strategy(reduced['event_catalogue_red'], inputs['drm_configs'],
-                             cfg.simulation.catalogue_length)
+                             cfg.simulation.catalogue_length, first_year=cfg.simulation.first_year)
     payback = reporting.drr_payback_years(sim['synthetic_annual_df'], reduced['synthetic_annual_red_df'],
                                           rr.investment)
     _log(f"ex-ante risk reduction evaluated: total investment {np.sum(rr.investment):,.1f} $MM, "
@@ -127,6 +130,7 @@ def run_risk_reduction(cfg, lec, sim, inputs):
         'event_catalogue_red': reduced['event_catalogue_red'],
         'lec_curves_by_target': reduced['lec_curves_by_target'],
         'payout_red_dfs': drm_red['payout_dfs'],
+        'balance_red_dfs': drm_red['balance_dfs'],
         'total_coverage_red': drm_red['total_coverage'],
         'payback_years': payback,
     }
@@ -247,6 +251,18 @@ def write_outputs(cfg, inputs, lec, sim, strat, drr, cba, thresholds, out_dir):
         gaps.append(('Reduced (ex-ante)', reporting.gap_probabilities(
             drr['synthetic_annual_red_df'], drr['total_coverage_red'], thresholds)))
 
+    # End-of-year balances, one table per scenario across all simulations.
+    balance_scenarios = [('base', strat['balance_dfs'])]
+    if drr is not None:
+        balance_scenarios.append(('reduced', drr['balance_red_dfs']))
+    for scenario, balances in balance_scenarios:
+        if balances:
+            table = pd.concat(balances, names=['instrument', 'simulation'])
+            table.columns = year_labels
+            balance_path = out_dir / f'{run_id}_balances_{scenario}.csv'
+            table.to_csv(balance_path, encoding='utf-8-sig')
+            files.append(balance_path)
+
     stats_path = out_dir / f'{run_id}_statistics.csv'
     reporting.statistics_table([s[1] for s in scenarios]).to_csv(stats_path, encoding='utf-8-sig')
     files.append(stats_path)
@@ -326,6 +342,8 @@ def run(config_path=None):
 
 
 if __name__ == '__main__':
+    if sys.platform == 'win32' and hasattr(sys.stdout, 'reconfigure'):
+        sys.stdout.reconfigure(encoding='utf-8')
     try:
         run(sys.argv[1] if len(sys.argv) > 1 else None)
     except ConfigError as exc:

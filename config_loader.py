@@ -19,6 +19,7 @@ with RunConfig attributes.
 
 from __future__ import annotations
 
+import math
 import tomllib
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -26,16 +27,18 @@ from pathlib import Path
 from typing import Any, Optional
 
 import pandas as pd
+from utils import validate_insurance_layer
 
 
-INSTRUMENT_TYPES = ('insurance', 'ppo', 'ccf', 'ddo')
+INSTRUMENT_TYPES = ('insurance', 'ppo', 'ccf', 'ddo', 'loan')
 
 # Payout parameters that risk_management.apply_strategy needs per type.
 REQUIRED_INSTRUMENT_KEYS = {
     'insurance': ('attachment_point', 'exhaustion_point', 'ceding_percentage'),
     'ppo':       (),
-    'ccf':       ('ccf_maximum', 'ccf_person', 'Pop_exposed'),
-    'ddo':       ('ddo_threshold', 'ddo_available'),
+    'ccf':       ('ccf_threshold', 'ccf_person', 'Pop_exposed'),
+    'ddo':       ('ddo_threshold',),
+    'loan':      ('loan_threshold', 'initial_balance', 'start_year', 'end_year'),
 }
 
 # Optional CBA cost overrides accepted per type (see cba.engine._build_instrument_config).
@@ -46,6 +49,7 @@ CBA_COST_KEYS = {
     'ccf':       ('drawdown_fee_rate', 'loan_interest_rate', 'repayment_years',
                   'grace_period_years'),
     'ddo':       ('loan_interest_rate', 'repayment_years'),
+    'loan':      ('loan_interest_rate', 'repayment_years'),
 }
 
 _INVALID_ID_CHARS = set('<>:"/\\|?*')
@@ -303,6 +307,34 @@ def load_config(path: Optional[str | Path] = None) -> RunConfig:
         for key in REQUIRED_INSTRUMENT_KEYS[itype]:
             if key not in inst:
                 raise ConfigError(f"[{label}] ('{name}', type '{itype}') is missing '{key}'.")
+        if itype == 'insurance':
+            try:
+                validate_insurance_layer(inst['attachment_point'], inst['exhaustion_point'],
+                                         inst['ceding_percentage'])
+            except ValueError as exc:
+                raise ConfigError(f"[{label}] ('{name}'): {exc}") from exc
+        if itype in ('ccf', 'ddo'):
+            for key in ('initial_balance', 'contracted_amount', 'first_renewal_year',
+                        'renewal_interval_years', 'max_replenishments_per_period'):
+                if key not in inst:
+                    raise ConfigError(f"[{label}] is missing '{key}'.")
+            _number(inst, 'first_renewal_year', label, lo=1, integer=True)
+            _number(inst, 'renewal_interval_years', label, lo=1, integer=True)
+            _number(inst, 'max_replenishments_per_period', label, lo=0, hi=1, integer=True)
+        if itype in ('ccf', 'ddo', 'loan'):
+            for key in ('initial_balance', 'contracted_amount', 'ccf_threshold',
+                        'ccf_person', 'ddo_threshold', 'loan_threshold'):
+                if key in inst:
+                    value = _number(inst, key, label, lo=0)
+                    if not math.isfinite(value):
+                        raise ConfigError(f"[{label}] '{key}' must be finite.")
+        if itype == 'ccf':
+            population = _number(inst, 'Pop_exposed', label, lo=1)
+            if not math.isfinite(population):
+                raise ConfigError(f"[{label}] 'Pop_exposed' must be finite.")
+        if itype == 'loan':
+            start = _number(inst, 'start_year', label, integer=True)
+            _number(inst, 'end_year', label, lo=start, integer=True)
         if 'interest_rate' in inst:
             raise ConfigError(
                 f"[{label}] ('{name}') uses 'interest_rate'; the key is 'loan_interest_rate'."
@@ -521,6 +553,7 @@ def build_cba_config(cfg: RunConfig):
         ppo=_make(PPOConfig, 'ppo'),
         ccf=_make(CCFConfig, 'ccf'),
         ddo=_make(DDOConfig, 'ddo'),
+        loan=_make(DDOConfig, 'loan'),
         cnc=cnc,
         legacy_truncation=c.legacy_truncation,
     )

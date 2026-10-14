@@ -174,8 +174,8 @@ Aplica una estrategia definida como lista de dicts sobre todos los catálogos si
 | --- | --- | --- |
 | `insurance` | Seguro paramétrico (ej. CCRIF) | `attachment_point`, `exhaustion_point`, `ceding_percentage` |
 | `ppo` | PPO de activación única por catálogo (se activa con el CCF) | calendario leído de `ppo_schedule_file` |
-| `ccf` | CCF con techo acumulativo | `ccf_maximum`, `ccf_person`, `Pop_exposed` |
-| `ddo` | DDO con umbral de activación y pago fijo | `ddo_threshold`, `ddo_available` |
+| `ccf` | CCF con saldo, reposición y renovación | `ccf_threshold`, `ccf_person`, `Pop_exposed` + parámetros de saldo y renovación |
+| `ddo` | DDO con umbral y saldo renovable, sin límite por desastre | `ddo_threshold` + parámetros de saldo y renovación |
 
 > La cobertura total de todos los instrumentos está limitada automáticamente a no superar la pérdida bruta por evento (escala proporcional). Un `ppo` requiere un `ccf` en la misma estrategia.
 
@@ -223,3 +223,43 @@ El BID no será responsable, bajo circunstancia alguna, de daño ni indemnizaci�
 i. Bajo cualquier teoría de responsabilidad, ya sea por contrato, infracción de derechos de propiedad intelectual, negligencia o bajo cualquier otra teoría; y/o
 
 ii. A raíz del uso de la Herramienta Digital, incluyendo, pero sin limitación de potenciales defectos en la Herramienta Digital, o la pérdida o inexactitud de los datos de cualquier tipo. Lo anterior incluye los gastos o daños asociados a fallas de comunicación y/o fallas de funcionamiento de computadoras, vinculados con la utilización de la Herramienta Digital.
+
+
+### Saldos y renovaciones de CCF, DDO y loan
+
+Los CCF y DDO requieren `initial_balance`, `contracted_amount`,
+`first_renewal_year`, `renewal_interval_years` y `max_replenishments_per_period`.
+`first_renewal_year` es un año calendario. Si es anterior al inicio de la
+simulación, se usa para ubicar la siguiente renovación del calendario,
+conservando el saldo inicial hasta esa fecha. La renovación ocurre al inicio de ese año, antes de los eventos,
+y se repite cada `renewal_interval_years` (CCF: 5; DDO: 3). Restaura el saldo a
+`contracted_amount`, incluso con saldo parcial y sin desastres, y reinicia el
+contador de reposiciones. Antes de la primera renovación se usa `initial_balance`.
+
+Con `max_replenishments_per_period = 1`, al agotarse el saldo se permite una
+reposición al monto contratado por período, incluido el período inicial.
+Si un desastre agota el saldo, la reposición permitida puede completar el pago
+de ese mismo evento, sin aumentar su desembolso solicitado. También puede
+utilizarse con saldo inicial cero, siempre que quede una reposición permitida.
+Un segundo agotamiento debe esperar a la renovación automática. La reposición
+no mueve las fechas de renovación. Se admite 0 para desactivar la reposición.
+
+CCF activa con pérdida estrictamente mayor que
+`max(ccf_threshold, 0.01 * Pop_exposed * ccf_person / 1e6)` y mantiene la fórmula
+por personas afectadas. `contracted_amount` reemplaza el antiguo `ccf_maximum`.
+DDO activa con pérdida estrictamente mayor que `ddo_threshold` y solicita
+`min(pérdida, saldo + reposición permitida)`, sin límite adicional por desastre.
+
+`loan` requiere `loan_threshold`, `initial_balance`, `start_year` y `end_year`.
+No se repone ni renueva. Los años de vigencia son inclusivos. En cada evento
+elegible solicita `min(pérdida, saldo)`. Su costo se calcula con el modelo de
+servicio de deuda existente del DDO; `loan_interest_rate` y `repayment_years`
+pueden definirse por instrumento o en `[cba.defaults.loan]`. Si se omiten,
+son 0.035 y 5 respectivamente; deben ajustarse al contrato real.
+
+Todos los saldos descuentan únicamente desembolsos efectivos después de aplicar
+el límite conjunto por desastre. Cada instrumento y simulación tiene su propio
+saldo. Los archivos `<run_id>_balances_base.csv` y, con DRR,
+`<run_id>_balances_reduced.csv` guardan los saldos al cierre de cada año calendario.
+El año inicial sigue definido por `simulation.first_year` o, si se omite, el
+próximo año según la regla original del código.

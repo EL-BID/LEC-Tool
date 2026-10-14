@@ -17,6 +17,7 @@ NOTE: All monetary values in M USD (millions of US dollars).
 from dataclasses import dataclass, field
 from typing import Optional, List
 import numpy as np
+from utils import validate_insurance_layer
 
 
 @dataclass
@@ -70,21 +71,11 @@ class InsuranceConfig:
     cost_function: str = "primary"
 
     def __post_init__(self):
+        validate_insurance_layer(self.attachment_point, self.exhaustion_point, self.ceding_percentage)
         if self.premium is None:
             coverage = (self.exhaustion_point - self.attachment_point) * self.ceding_percentage
             self.premium = self.rate_on_line * coverage
-        # Defensive validation: stop on absurd configuration.
-        if self.exhaustion_point <= self.attachment_point:
-            raise ValueError(
-                f"InsuranceConfig: exhaustion_point ({self.exhaustion_point}) must "
-                f"be greater than attachment_point ({self.attachment_point}). "
-                f"The layer [attachment, exhaustion] would be empty or inverted."
-            )
-        if not (0.0 <= self.ceding_percentage <= 1.0):
-            raise ValueError(
-                f"InsuranceConfig: ceding_percentage must be in [0, 1], got "
-                f"{self.ceding_percentage}."
-            )
+
 
 
 @dataclass
@@ -231,7 +222,6 @@ class DDOConfig:
     repayment_years: int = 5
     cost_function: str = "primary"
     ddo_threshold: Optional[float] = None   # loss trigger ($MM)
-    ddo_available: Optional[float] = None   # fixed payout per activation ($MM)
 
 
 # ================================================================
@@ -298,6 +288,7 @@ class LECCBAConfig:
     ppo: PPOConfig = field(default_factory=PPOConfig)
     ccf: CCFConfig = field(default_factory=CCFConfig)
     ddo: DDOConfig = field(default_factory=DDOConfig)
+    loan: DDOConfig = field(default_factory=DDOConfig)
     drr: DRRConfig = field(default_factory=DRRConfig)
     # CNC (Comparative Net Cost) — optional, modular indicator.
     # Imported lazily to keep the module fully removable.
