@@ -40,6 +40,7 @@ from config_loader import (
     load_config, load_input_data, build_drm_configs, build_cba_config, ConfigError,
 )
 from lec_core import compute_empirical_lec, build_hybrid_lec
+from utils import compute_aal
 from simulation import generate_synthetic_catalogue
 from risk_management import apply_strategy
 from risk_reduction import compute_reduction_schedule, generate_reduced_catalogue
@@ -57,13 +58,25 @@ def _log(msg):
 def load_inputs(cfg):
     inputs = load_input_data(cfg)
     inputs['drm_configs'] = build_drm_configs(cfg, inputs['ppo_schedule'])
-    _log(f"inputs loaded: {len(inputs['event_loss_df'])} historical events, "
-         f"{len(inputs['drm_configs'])} instrument(s)"
+    _log((f"inputs loaded: {len(inputs['complete_curve'])} complete curve points, "
+          if cfg.lec.complete_curve else
+          f"inputs loaded: {len(inputs['event_loss_df'])} historical events, ")
+         + f"{len(inputs['drm_configs'])} instrument(s)"
          + (", PPO schedule read" if cfg.has_ppo else ""))
     return inputs
 
 
 def compute_lec(cfg, inputs):
+    if cfg.lec.complete_curve:
+        curve = inputs['complete_curve']
+        aal = compute_aal(curve[:, 0], curve[:, 1])
+        _log(f"Complete LEC imported: {len(curve)} points, AAL = {aal:,.2f} $MM")
+        return {
+            'lec_result': None, 'lec_curve': curve, 'aal': aal,
+            'aal_empirical': None, 'max_loss': float(curve[:, 0].max()),
+            'max_event_loss': None,
+            'pml': reporting.pml_by_return_period(curve, cfg.lec.pml_return_periods),
+        }
     lec_result = compute_empirical_lec(
         inputs['event_loss_df'],
         loss_scale_factor=cfg.lec.loss_scale_factor,
@@ -279,8 +292,8 @@ def write_outputs(cfg, inputs, lec, sim, strat, drr, cba, thresholds, out_dir):
     ctx = {
         'cfg': cfg,
         'n_events': len(inputs['event_loss_df']),
-        'year_min': int(inputs['event_loss_df']['year'].min()),
-        'year_max': int(inputs['event_loss_df']['year'].max()),
+        'year_min': int(inputs['event_loss_df']['year'].min()) if not inputs['event_loss_df'].empty else None,
+        'year_max': int(inputs['event_loss_df']['year'].max()) if not inputs['event_loss_df'].empty else None,
         'lec': lec,
         'instruments': strat['drm_configs'],
         'scenarios': scenarios,

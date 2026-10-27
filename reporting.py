@@ -163,12 +163,15 @@ def build_main_report(ctx):
         f"Run id:                      {cfg.run.id}",
         f"Generated:                   {datetime.now():%Y-%m-%d %H:%M}",
         f"Configuration file:          {cfg.source_path}",
-        f"Event losses:                {cfg.inputs.event_loss_file.name} "
-        f"({ctx['n_events']} events, {ctx['year_min']}-{ctx['year_max']})",
+        (f"Complete curve:              {cfg.inputs.complete_curve_file.name} (imported as supplied)"
+         if cfg.lec.complete_curve else
+         f"Event losses:                {cfg.inputs.event_loss_file.name} "
+        f"({ctx['n_events']} events, {ctx['year_min']}-{ctx['year_max']})"),
         f"Probabilistic tail:          "
-        + (f"{cfg.inputs.tail_curve_file.name} (hybrid curve)" if cfg.lec.hybrid_curve
-           else "not used (empirical curve only)"),
-        f"Loss / frequency scale:      {cfg.lec.loss_scale_factor:g} / {cfg.lec.freq_scale_factor:g}",
+        + (f"{cfg.inputs.tail_curve_file.name} (hybrid curve)" if cfg.lec.hybrid_curve and not cfg.lec.complete_curve
+           else "not used"),
+        ("Loss / frequency scale:      not applied (complete curve)" if cfg.lec.complete_curve else
+         f"Loss / frequency scale:      {cfg.lec.loss_scale_factor:g} / {cfg.lec.freq_scale_factor:g}"),
         f"Simulation:                  {sim.simulation_number} catalogues x {horizon} years, "
         f"seed = {sim.random_seed if sim.random_seed is not None else 'random'}",
         f"Fiscal responsibility share: {cfg.fiscal.resp_fiscal:.0%}",
@@ -177,11 +180,15 @@ def build_main_report(ctx):
     # --- LEC ----------------------------------------------------------------
     lec = ctx['lec']
     L += _section('LOSS EXCEEDANCE CURVE')
-    L.append(f"  AAL, empirical curve:              {_money(lec['aal_empirical'])}")
-    if cfg.lec.hybrid_curve:
+    if cfg.lec.complete_curve:
+        L.append(f"  AAL, imported curve:               {_money(lec['aal'])}")
+    else:
+        L.append(f"  AAL, empirical curve:              {_money(lec['aal_empirical'])}")
+    if cfg.lec.hybrid_curve and not cfg.lec.complete_curve:
         L.append(f"  AAL, hybrid curve (used below):    {_money(lec['aal'])}")
     L.append(f"  Maximum loss on the curve:         {_money(lec['max_loss'])}")
-    L.append(f"  Maximum historical event loss:     {_money(lec['max_event_loss'])}")
+    if not cfg.lec.complete_curve:
+        L.append(f"  Maximum historical event loss:     {_money(lec['max_event_loss'])}")
     for rp, (loss, in_range) in lec['pml'].items():
         note = '' if in_range else '  (beyond the curve range: capped at the curve maximum)'
         label = f"  PML, return period {rp:g} years:"

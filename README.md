@@ -270,3 +270,10 @@ próximo año según la regla original del código.
 ### Prioridad y responsabilidad fiscal
 
 Los instrumentos se aplican en el orden de los bloques `[[strategy.instruments]]` de `config.toml`. Para cambiar la prioridad, mueve los bloques completos. El orden configurado es préstamo BID → CCF → DDO BM → DDO BID. Los umbrales y fórmulas contractuales usan la pérdida total; cada desembolso se limita a la pérdida fiscal pendiente (`pérdida total × resp_fiscal`) y al saldo disponible. Solo el desembolso aplicado consume saldo. Se conservan renovaciones y reposiciones. El PPO usa la elegibilidad por pérdida total del primer CCF, independientemente de su posición o saldo; su activación única se consume únicamente cuando desembolsa. Los gráficos de cobertura y probabilidades de brecha usan la base fiscal. El CBA conserva `loss_basis` y usa los desembolsos reales sin volver a escalarlos.
+
+
+### Import an existing complete LEC
+
+Set `[lec] complete_curve = true` and `[inputs] complete_curve_file = "El Salvador_final_lec.csv"`. The CSV must contain `tail_loss` (losses in $MM) and `tail_aep` (annual exceedance rates, which may exceed 1). At least two finite points are required, with nonnegative losses spanning a nonzero range and nonnegative nonincreasing rates. Rows are sorted by loss.
+
+The supplied curve is used directly: no empirical calculation, bootstrap, hybrid blending, or loss/frequency scaling is applied. Historical and tail files are not required in this mode. Simulation, financing strategies, risk reduction and CBA keep using the same pipeline. AAL and PML are evaluated from the imported curve. The graph and report identify the imported curve without inventing historical observations or confidence bands. Set `complete_curve = false` (the default when omitted) to use the existing calculation mode.

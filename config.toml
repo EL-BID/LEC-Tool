@@ -15,11 +15,13 @@ show_figures = true             # true: also open figure windows (the run pauses
 figure_dpi   = 130              # resolution of the saved PNG figures
 
 [inputs]
+complete_curve_file = "El Salvador_final_lec.csv"  # columns: tail_loss ($MM), tail_aep (annual exceedance rate)
 event_loss_file   = "Country databases/12 - El Salvador/SLV_event_loss_subset.csv"   # columns: year (int), econ_loss ($MM)
 tail_curve_file   = "Country databases/12 - El Salvador/SLV_event_prob_subset.csv"   # columns: tail_loss ($MM), tail_aep; used only if lec.hybrid_curve = true
 ppo_schedule_file = "data/ppo_example.csv"                                           # one headerless row, one value per year; used only if a "ppo" instrument is declared
 
 [lec]
+complete_curve = true  # true: import complete_curve_file as supplied; false: calculate from historical data
 loss_scale_factor       = 1.15   # multiplies every loss (historic catalogue and probabilistic tail)
 freq_scale_factor       = 1.0    # multiplies every exceedance rate
 hybrid_curve            = true   # blend the empirical LEC with the probabilistic tail

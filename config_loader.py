@@ -26,6 +26,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Optional
 
+import numpy as np
 import pandas as pd
 from utils import validate_insurance_layer
 
@@ -73,13 +74,15 @@ class RunSection:
 
 @dataclass
 class InputsSection:
-    event_loss_file: Path
+    event_loss_file: Optional[Path] = None
+    complete_curve_file: Optional[Path] = None
     tail_curve_file: Optional[Path] = None
     ppo_schedule_file: Optional[Path] = None
 
 
 @dataclass
 class LecSection:
+    complete_curve: bool = False
     loss_scale_factor: float = 1.0
     freq_scale_factor: float = 1.0
     hybrid_curve: bool = True
@@ -251,6 +254,7 @@ def load_config(path: Optional[str | Path] = None) -> RunConfig:
     # --- [lec] --------------------------------------------------------------
     sec = _section(raw, 'lec', required=False)
     lec = LecSection(
+        complete_curve=_get(sec, 'complete_curve', 'lec', False, bool),
         loss_scale_factor=_number(sec, 'loss_scale_factor', 'lec', 1.0, lo=1e-12),
         freq_scale_factor=_number(sec, 'freq_scale_factor', 'lec', 1.0, lo=1e-12),
         hybrid_curve=_get(sec, 'hybrid_curve', 'lec', True, bool),
@@ -353,13 +357,16 @@ def load_config(path: Optional[str | Path] = None) -> RunConfig:
     # --- [inputs] -----------------------------------------------------------
     sec = _section(raw, 'inputs')
     inputs = InputsSection(
-        event_loss_file=_path(sec, 'event_loss_file', 'inputs', base, required=True),
-        tail_curve_file=_path(sec, 'tail_curve_file', 'inputs', base, required=lec.hybrid_curve),
+        event_loss_file=_path(sec, 'event_loss_file', 'inputs', base, required=not lec.complete_curve),
+        complete_curve_file=_path(sec, 'complete_curve_file', 'inputs', base, required=lec.complete_curve),
+        tail_curve_file=_path(sec, 'tail_curve_file', 'inputs', base, required=lec.hybrid_curve and not lec.complete_curve),
         ppo_schedule_file=_path(sec, 'ppo_schedule_file', 'inputs', base, required='ppo' in types_present),
     )
-    if not inputs.event_loss_file.exists():
+    if lec.complete_curve and not inputs.complete_curve_file.exists():
+        raise ConfigError(f"[inputs] complete_curve_file not found: {inputs.complete_curve_file}")
+    if not lec.complete_curve and not inputs.event_loss_file.exists():
         raise ConfigError(f"[inputs] event_loss_file not found: {inputs.event_loss_file}")
-    if lec.hybrid_curve and not inputs.tail_curve_file.exists():
+    if not lec.complete_curve and lec.hybrid_curve and not inputs.tail_curve_file.exists():
         raise ConfigError(f"[inputs] tail_curve_file not found: {inputs.tail_curve_file}")
     if 'ppo' in types_present and not inputs.ppo_schedule_file.exists():
         raise ConfigError(f"[inputs] ppo_schedule_file not found: {inputs.ppo_schedule_file}")
@@ -452,15 +459,33 @@ def load_input_data(cfg: RunConfig) -> dict:
       tail_aep        ndarray or None (scaled by freq_scale_factor).
       ppo_schedule    list of floats or None (only when a ppo instrument exists).
     """
-    event_loss_df = pd.read_csv(cfg.inputs.event_loss_file)
-    for col in ('year', 'econ_loss'):
-        if col not in event_loss_df.columns:
-            raise ConfigError(f"{cfg.inputs.event_loss_file.name} must contain a '{col}' column.")
-    if event_loss_df.empty:
-        raise ConfigError(f"{cfg.inputs.event_loss_file.name} contains no events.")
+    complete_curve = None
+    event_loss_df = pd.DataFrame(columns=['year', 'econ_loss'])
+    if cfg.lec.complete_curve:
+        path = cfg.inputs.complete_curve_file
+        try:
+            frame = pd.read_csv(path)
+            complete_curve = frame[['tail_loss', 'tail_aep']].to_numpy(dtype=float)
+        except (ValueError, KeyError, pd.errors.ParserError) as exc:
+            raise ConfigError(f"{path.name} must contain numeric tail_loss and tail_aep columns.") from exc
+        if len(complete_curve) < 2 or not np.isfinite(complete_curve).all():
+            raise ConfigError(f"{path.name} must contain at least two finite curve points.")
+        complete_curve = complete_curve[np.argsort(complete_curve[:, 0], kind='stable')]
+        losses, rates = complete_curve.T
+        if (losses < 0).any() or losses.max() <= losses.min():
+            raise ConfigError(f"{path.name}: losses must be nonnegative and span a nonzero range.")
+        if (rates < 0).any() or rates.max() <= 0 or (np.diff(rates) > 0).any():
+            raise ConfigError(f"{path.name}: annual exceedance rates must be nonnegative, nonincreasing and include a positive rate.")
+    else:
+        event_loss_df = pd.read_csv(cfg.inputs.event_loss_file)
+        for col in ('year', 'econ_loss'):
+            if col not in event_loss_df.columns:
+                raise ConfigError(f"{cfg.inputs.event_loss_file.name} must contain a '{col}' column.")
+        if event_loss_df.empty:
+            raise ConfigError(f"{cfg.inputs.event_loss_file.name} contains no events.")
 
     tail_loss = tail_aep = None
-    if cfg.lec.hybrid_curve:
+    if cfg.lec.hybrid_curve and not cfg.lec.complete_curve:
         tail_df = pd.read_csv(cfg.inputs.tail_curve_file)
         for col in ('tail_loss', 'tail_aep'):
             if col not in tail_df.columns:
@@ -480,6 +505,7 @@ def load_input_data(cfg: RunConfig) -> dict:
         ppo_schedule = [float(v) for v in ppo_schedule]
 
     return {
+        'complete_curve': complete_curve,
         'event_loss_df': event_loss_df,
         'tail_loss': tail_loss,
         'tail_aep': tail_aep,

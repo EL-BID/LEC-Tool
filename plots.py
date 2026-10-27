@@ -42,6 +42,16 @@ def save_figure(fig, output_dir: Path, run_id: str, index: int, slug: str,
 
 def plot_lec_curve(lec_result, lec_curve, aal, hybrid, event_loss_df):
     """Figure 01: empirical LEC with bootstrap band (+ hybrid) and annual losses."""
+    if lec_result is None:
+        fig, ax = plt.subplots(figsize=(9, 6))
+        ax.plot(lec_curve[:, 0], lec_curve[:, 1], label='Imported complete LEC')
+        ax.set(xscale='log', yscale='log', xlabel='Economic loss [$MM]',
+               ylabel='Annual frequency of exceedance', title='Loss Exceedance Curve (LEC)')
+        ax.grid(True, which='both')
+        ax.text(0.05, 0.8, f'AAL = ${aal:,.2f} MM', transform=ax.transAxes)
+        ax.legend()
+        fig.tight_layout()
+        return fig
     fig, axes = plt.subplots(1, 2, figsize=(16, 6))
 
     ax = axes[0]
