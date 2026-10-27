@@ -22,8 +22,9 @@ Convenciones:
 
 | Clave | Tipo | Requerida cuando | Descripción |
 | --- | --- | --- | --- |
-| `event_loss_file` | ruta | siempre | CSV con columnas `year` (entero) y `econ_loss` ($MM) |
-| `tail_curve_file` | ruta | `lec.hybrid_curve = true` | CSV con columnas `tail_loss` ($MM) y `tail_aep` (tasa anual de excedencia) |
+| `event_loss_file` | ruta | `lec.mode = "empirical"` o `"hybrid"` | CSV con columnas `year` (entero) y `econ_loss` ($MM) |
+| `tail_curve_file` | ruta | `lec.mode = "hybrid"` | CSV con columnas `tail_loss` ($MM) y `tail_aep` (tasa anual de excedencia) |
+| `complete_curve_file` | ruta | `lec.mode = "complete"` | CSV con `tail_loss`, `tail_aep` o `loss_MM`, `exceedance_rate` ($MM, eventos/año) |
 | `ppo_schedule_file` | ruta | existe un instrumento `ppo` | CSV de una fila sin encabezado con `catalogue_length` valores ($MM disponibles por año) |
 
 ## `[lec]`
@@ -32,7 +33,7 @@ Convenciones:
 | --- | --- | --- | --- |
 | `loss_scale_factor` | número > 0 | `1.0` | Multiplica todas las pérdidas (catálogo histórico y cola probabilística) |
 | `freq_scale_factor` | número > 0 | `1.0` | Multiplica todas las tasas de excedencia |
-| `hybrid_curve` | booleano | `true` | Combina la curva empírica con la cola probabilística |
+| `mode` | texto | `"hybrid"` | `"empirical"`: datos históricos; `"hybrid"`: históricos y cola probabilística; `"complete"`: importar curva completa |
 | `bootstrap_samples` | entero ≥ 1 | `1000` | Réplicas bootstrap para la banda de confianza |
 | `pml_return_periods` | lista de números ≥ 1 | `[200]` | Periodos de retorno (años) para los que se reporta el PML |
 | `gap_threshold_fractions` | lista de números > 0 | `[0.25, 0.50, 0.75, 1.00]` | Umbrales de brecha de financiamiento como fracción de la pérdida máxima de la curva LEC |
@@ -176,6 +177,10 @@ Los instrumentos se aplican en el orden de los bloques `[[strategy.instruments]]
 
 ### Import an existing complete LEC
 
-Set `[lec] complete_curve = true` and `[inputs] complete_curve_file = "El Salvador_final_lec.csv"`. The CSV must contain `tail_loss` (losses in $MM) and `tail_aep` (annual exceedance rates, which may exceed 1). At least two finite points are required, with nonnegative losses spanning a nonzero range and nonnegative nonincreasing rates. Rows are sorted by loss.
+Set `[lec] mode = "complete"` and `[inputs] complete_curve_file = "El Salvador_final_lec.csv"`. The CSV must contain `tail_loss` (losses in $MM) and `tail_aep` (annual exceedance rates, which may exceed 1). At least two finite points are required, with nonnegative losses spanning a nonzero range and nonnegative nonincreasing rates. Rows are sorted by loss.
 
-The supplied curve is used directly: no empirical calculation, bootstrap, hybrid blending, or loss/frequency scaling is applied. Historical and tail files are not required in this mode. Simulation, financing strategies, risk reduction and CBA keep using the same pipeline. AAL and PML are evaluated from the imported curve. The graph and report identify the imported curve without inventing historical observations or confidence bands. Set `complete_curve = false` (the default when omitted) to use the existing calculation mode.
+The supplied curve is used directly: no empirical calculation, bootstrap, hybrid blending, or loss/frequency scaling is applied. Historical and tail files are not required in this mode. Simulation, financing strategies, risk reduction and CBA keep using the same pipeline. AAL and PML are evaluated from the imported curve. The graph and report identify the imported curve without inventing historical observations or confidence bands. Use `mode = "empirical"` for historical calculation or `mode = "hybrid"` for historical calculation with probabilistic tail blending. Select only one mode. Older configurations without `mode` still accept the previous boolean flags and defaults; do not combine them with `mode`.
+
+`complete_curve_file` is required only for `mode = "complete"`. Historical input is required only for `empirical`/`hybrid`; probabilistic tail input only for `hybrid`. Scaling and bootstrap settings apply only to empirical/hybrid modes. PML and financing-gap settings apply to every mode. The selected mode is printed at startup.
+
+Complete-curve imports also accept the equivalent column pair `loss_MM`, `exceedance_rate` ($MM, events/year). Both formats are read without changing the CSV.

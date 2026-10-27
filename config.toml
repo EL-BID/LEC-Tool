@@ -3,8 +3,9 @@
 # =============================================================================
 # This is the only file you need to edit. Run the tool with:   python main.py
 #
-# Units: monetary values in millions of US dollars ($MM); rates as decimals
-# (0.05 = 5 %). File paths are relative to the folder containing this file.
+# Units: monetary values in millions of US dollars ($MM). Interest/fee rates
+# are decimals (0.05 = 5 %); curve exceedance rates are events/year and may exceed 1.
+# File paths are relative to the folder containing this file.
 # Full reference of every key: docs/CONFIG.md
 # =============================================================================
 
@@ -15,25 +16,38 @@ show_figures = true             # true: also open figure windows (the run pauses
 figure_dpi   = 130              # resolution of the saved PNG figures
 
 [inputs]
-complete_curve_file = "El Salvador_final_lec.csv"  # columns: tail_loss ($MM), tail_aep (annual exceedance rate)
-event_loss_file   = "Country databases/12 - El Salvador/SLV_event_loss_subset.csv"   # columns: year (int), econ_loss ($MM)
-tail_curve_file   = "Country databases/12 - El Salvador/SLV_event_prob_subset.csv"   # columns: tail_loss ($MM), tail_aep; used only if lec.hybrid_curve = true
-ppo_schedule_file = "data/ppo_example.csv"                                           # one headerless row, one value per year; used only if a "ppo" instrument is declared
+# Used in empirical and hybrid modes: year (int), econ_loss ($MM).
+event_loss_file = "Country databases/12 - El Salvador/SLV_event_loss_subset.csv"
+# Used only in hybrid mode: tail_loss ($MM), tail_aep (annual exceedance rate).
+tail_curve_file = "Country databases/12 - El Salvador/SLV_event_prob_subset.csv"
+# Used only in complete mode: tail_loss/tail_aep or loss_MM/exceedance_rate.
+complete_curve_file = "El Salvador_final_lec.csv"
+# Used in every mode, but only when a PPO instrument is declared.
+# One headerless row with one amount per simulated year.
+ppo_schedule_file = "data/ppo_example.csv"
 
 [lec]
-complete_curve = true  # true: import complete_curve_file as supplied; false: calculate from historical data
-loss_scale_factor       = 1.15   # multiplies every loss (historic catalogue and probabilistic tail)
-freq_scale_factor       = 1.0    # multiplies every exceedance rate
-hybrid_curve            = true   # blend the empirical LEC with the probabilistic tail
-bootstrap_samples       = 1000   # bootstrap resamples for the LEC confidence band
-pml_return_periods      = [200]  # return periods (years) for which the PML is reported
-gap_threshold_fractions = [0.25, 0.50, 0.75, 0.90]   # financing-gap thresholds as fractions of the maximum loss on the LEC curve
+# Select exactly ONE curve source:
+# "empirical": calculate from historical events.
+# "hybrid": calculate from historical events and blend with the probabilistic tail.
+# "complete": import the complete CSV curve directly, without recalculating it.
+mode = "complete"
+
+# Used ONLY in empirical/hybrid modes; ignored in complete mode.
+# Complete mode preserves the losses and annual exceedance rates as supplied.
+loss_scale_factor = 1.15
+freq_scale_factor = 1.0
+bootstrap_samples = 1000
+
+# Used in EVERY mode.
+pml_return_periods = [200]                          # return periods in years
+gap_threshold_fractions = [0.25, 0.50, 0.75, 0.90]  # fractions of maximum curve loss
 
 [simulation]
 catalogue_length    = 15         # years per synthetic catalogue (simulation horizon)
 simulation_number   = 1000       # number of independent catalogues
 random_seed         = 99         # remove this line for a non-reproducible run
-displayed_catalogue = 205        # catalogue index (0 to simulation_number-1) shown in the per-catalogue figures
+displayed_catalogue = 179        # catalogue index (0 to simulation_number-1) shown in the per-catalogue figures
 first_year          = 2026       # optional: calendar year of the first simulated year (axis labels only); default = next year
 
 [fiscal]
@@ -73,18 +87,6 @@ start_year = 2026
 end_year = 2029
 
 [[strategy.instruments]]
-name        = "BID CCF US$400M"
-type        = "ccf"
-ccf_threshold = 100     # $MM, emergency loss threshold
-initial_balance = 351.4 # $MM, available at simulation start
-contracted_amount = 400 # $MM, restored at replenishment / renewal
-first_renewal_year = 2031
-renewal_interval_years = 5
-max_replenishments_per_period = 1
-ccf_person  = 1500      # $ per affected person
-Pop_exposed = 6.39e6    # exposed population
-
-[[strategy.instruments]]
 name          = "BM CAT-DDO US$100M"
 type          = "ddo"
 ddo_threshold = 100
@@ -103,6 +105,18 @@ contracted_amount = 393
 first_renewal_year = 2029
 renewal_interval_years = 3
 max_replenishments_per_period = 1
+
+[[strategy.instruments]]
+name        = "BID CCF US$400M"
+type        = "ccf"
+ccf_threshold = 100     # $MM, emergency loss threshold
+initial_balance = 351.4 # $MM, available at simulation start
+contracted_amount = 400 # $MM, restored at replenishment / renewal
+first_renewal_year = 2031
+renewal_interval_years = 5
+max_replenishments_per_period = 1
+ccf_person  = 1500      # $ per affected person
+Pop_exposed = 6.39e6    # exposed population
 
 [risk_reduction]
 enabled            = false  # false: skip the ex-ante risk-reduction (DRR) analysis entirely

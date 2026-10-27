@@ -317,6 +317,7 @@ def write_outputs(cfg, inputs, lec, sim, strat, drr, cba, thresholds, out_dir):
 def run(config_path=None):
     """Run the complete pipeline for one configuration file. Returns the output folder."""
     cfg = load_config(config_path)
+    _log(f"LEC mode: {cfg.lec.mode}")
     out_dir = cfg.output_path
     out_dir.mkdir(parents=True, exist_ok=True)
     _log(f"run '{cfg.run.id}' -> {out_dir}")

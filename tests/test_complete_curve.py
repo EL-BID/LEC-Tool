@@ -15,7 +15,9 @@ class CompleteCurveTests(unittest.TestCase):
     def test_supplied_curve_is_used_without_fitting_or_scaling(self):
         cfg=self.config()
         data=load_input_data(cfg)
-        expected=pd.read_csv(cfg.inputs.complete_curve_file)[['tail_loss','tail_aep']].to_numpy()
+        frame=pd.read_csv(cfg.inputs.complete_curve_file)
+        columns=['tail_loss','tail_aep'] if 'tail_loss' in frame else ['loss_MM','exceedance_rate']
+        expected=frame[columns].to_numpy()
         expected=expected[np.argsort(expected[:,0],kind='stable')]
         with patch('main.compute_empirical_lec',side_effect=AssertionError('must not fit')), patch('main.build_hybrid_lec',side_effect=AssertionError('must not blend')):
             result=compute_lec(cfg,data)

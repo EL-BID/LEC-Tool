@@ -82,6 +82,7 @@ class InputsSection:
 
 @dataclass
 class LecSection:
+    mode: str = "hybrid"
     complete_curve: bool = False
     loss_scale_factor: float = 1.0
     freq_scale_factor: float = 1.0
@@ -253,11 +254,23 @@ def load_config(path: Optional[str | Path] = None) -> RunConfig:
 
     # --- [lec] --------------------------------------------------------------
     sec = _section(raw, 'lec', required=False)
+    if 'mode' in sec:
+        mode = _get(sec, 'mode', 'lec', types=str)
+        if mode not in ('empirical', 'hybrid', 'complete'):
+            raise ConfigError("[lec] 'mode' must be 'empirical', 'hybrid', or 'complete'.")
+        if 'complete_curve' in sec or 'hybrid_curve' in sec:
+            raise ConfigError("[lec] use 'mode' alone; remove the legacy complete_curve and hybrid_curve flags.")
+    else:
+        # Preserve the previous defaults and complete-curve precedence.
+        complete = _get(sec, 'complete_curve', 'lec', False, bool)
+        hybrid = _get(sec, 'hybrid_curve', 'lec', True, bool)
+        mode = 'complete' if complete else ('hybrid' if hybrid else 'empirical')
     lec = LecSection(
-        complete_curve=_get(sec, 'complete_curve', 'lec', False, bool),
+        mode=mode,
+        complete_curve=mode == 'complete',
         loss_scale_factor=_number(sec, 'loss_scale_factor', 'lec', 1.0, lo=1e-12),
         freq_scale_factor=_number(sec, 'freq_scale_factor', 'lec', 1.0, lo=1e-12),
-        hybrid_curve=_get(sec, 'hybrid_curve', 'lec', True, bool),
+        hybrid_curve=mode == 'hybrid',
         bootstrap_samples=_number(sec, 'bootstrap_samples', 'lec', 1000, lo=1, integer=True),
         pml_return_periods=_number_list(sec, 'pml_return_periods', 'lec', [200], lo=1),
         gap_threshold_fractions=_number_list(sec, 'gap_threshold_fractions', 'lec',
@@ -465,9 +478,11 @@ def load_input_data(cfg: RunConfig) -> dict:
         path = cfg.inputs.complete_curve_file
         try:
             frame = pd.read_csv(path)
-            complete_curve = frame[['tail_loss', 'tail_aep']].to_numpy(dtype=float)
+            columns = (['tail_loss', 'tail_aep'] if {'tail_loss', 'tail_aep'} <= set(frame.columns)
+                       else ['loss_MM', 'exceedance_rate'])
+            complete_curve = frame[columns].to_numpy(dtype=float)
         except (ValueError, KeyError, pd.errors.ParserError) as exc:
-            raise ConfigError(f"{path.name} must contain numeric tail_loss and tail_aep columns.") from exc
+            raise ConfigError(f"{path.name} must contain numeric tail_loss/tail_aep or loss_MM/exceedance_rate columns.") from exc
         if len(complete_curve) < 2 or not np.isfinite(complete_curve).all():
             raise ConfigError(f"{path.name} must contain at least two finite curve points.")
         complete_curve = complete_curve[np.argsort(complete_curve[:, 0], kind='stable')]

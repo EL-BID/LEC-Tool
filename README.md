@@ -111,7 +111,7 @@ Opcionalmente puede indicarse otro archivo de configuración: `python main.py mi
 El flujo completo es:
 
 1. Carga del catálogo histórico de pérdidas (y de la cola probabilística y el calendario PPO si aplican)
-2. Curva LEC empírica con intervalos de confianza; curva híbrida si `lec.hybrid_curve = true`
+2. Curva LEC empírica con intervalos de confianza; curva híbrida si `lec.mode = "hybrid"`
 3. Generación de catálogos sintéticos
 4. Evaluación de la estrategia financiera sobre el catálogo base
 5. Reducción del riesgo ex-ante y reevaluación de la estrategia sobre el catálogo reducido (si `risk_reduction.enabled = true`)
@@ -125,7 +125,7 @@ Por defecto las figuras solo se guardan; con `run.show_figures = true` también 
 | Archivo (clave en `[inputs]`) | Columnas / formato | Descripción |
 | --- | --- | --- |
 | `event_loss_file` | `year`, `econ_loss` | Catálogo histórico de pérdidas por evento ($MM). Obligatorio |
-| `tail_curve_file` | `tail_loss`, `tail_aep` | Cola probabilística para la curva híbrida ($MM, tasa anual de excedencia). Solo si `lec.hybrid_curve = true` |
+| `tail_curve_file` | `tail_loss`, `tail_aep` | Cola probabilística para la curva híbrida ($MM, tasa anual de excedencia). Solo si `lec.mode = "hybrid"` |
 | `ppo_schedule_file` | fila sin encabezado | `catalogue_length` valores de cobertura PPO disponible por año ($MM). Solo si la estrategia incluye un instrumento `ppo` |
 
 Los formatos de ejemplo están en la carpeta [`data/`](data/). La carpeta `Country databases/` contiene catálogos y colas probabilísticas por país que pueden referenciarse directamente desde `config.toml`.
@@ -274,6 +274,8 @@ Los instrumentos se aplican en el orden de los bloques `[[strategy.instruments]]
 
 ### Import an existing complete LEC
 
-Set `[lec] complete_curve = true` and `[inputs] complete_curve_file = "El Salvador_final_lec.csv"`. The CSV must contain `tail_loss` (losses in $MM) and `tail_aep` (annual exceedance rates, which may exceed 1). At least two finite points are required, with nonnegative losses spanning a nonzero range and nonnegative nonincreasing rates. Rows are sorted by loss.
+Set `[lec] mode = "complete"` and `[inputs] complete_curve_file = "El Salvador_final_lec.csv"`. The CSV must contain `tail_loss` (losses in $MM) and `tail_aep` (annual exceedance rates, which may exceed 1). At least two finite points are required, with nonnegative losses spanning a nonzero range and nonnegative nonincreasing rates. Rows are sorted by loss.
 
-The supplied curve is used directly: no empirical calculation, bootstrap, hybrid blending, or loss/frequency scaling is applied. Historical and tail files are not required in this mode. Simulation, financing strategies, risk reduction and CBA keep using the same pipeline. AAL and PML are evaluated from the imported curve. The graph and report identify the imported curve without inventing historical observations or confidence bands. Set `complete_curve = false` (the default when omitted) to use the existing calculation mode.
+The supplied curve is used directly: no empirical calculation, bootstrap, hybrid blending, or loss/frequency scaling is applied. Historical and tail files are not required in this mode. Simulation, financing strategies, risk reduction and CBA keep using the same pipeline. AAL and PML are evaluated from the imported curve. The graph and report identify the imported curve without inventing historical observations or confidence bands. Use `mode = "empirical"` for historical calculation or `mode = "hybrid"` for historical calculation with probabilistic tail blending. Select only one mode. Older configurations without `mode` still accept the previous boolean flags and defaults; do not combine them with `mode`.
+
+Complete-curve imports also accept the equivalent column pair `loss_MM`, `exceedance_rate` ($MM, events/year). Both formats are read without changing the CSV.
