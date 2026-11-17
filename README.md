@@ -2,6 +2,8 @@
 
 La herramienta **LEC Tool** consiste en una plataforma desarrollada por el **Banco Interamericano de Desarrollo** con el propósito de derivar curvas de excedencia de pérdidas (LEC) a partir de registros históricos y resultados de análisis probabilistas de desastres. Esta plataforma está diseñada para estimar la tasa de excedencia anual asociada a valores específicos de pérdidas económicas. La curva LEC resultante se utiliza posteriormente en análisis de riesgo y en la toma de decisiones para la gestión de desastres, particularmente para la selección de estrategias de transferencia y/o reducción de riesgo, y para su evaluación costo-beneficio.
 
+El **LEC Tool** está disponible como código abierto en este repositorio y como herramienta online en [este link de **RiskHUB**](https://riskhub.iadb.org/lec-tool). La herramienta online se basa en los mismos códigos y procesos descritos en este repositorio, sin embargo, el ciclo de actualización es más lento y puede no contener todas las funcionalidades disponibles en el código. Además, usuarios deben tomar en cuenta que debido a la naturaleza probabilistica de algunos componentes de la herramienta, los resultados entre ambas pueden variar ligeramente. 
+
 ![version](https://img.shields.io/badge/version-3.0.0-blue)
 
 ---
