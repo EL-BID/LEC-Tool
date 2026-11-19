@@ -214,10 +214,6 @@ Andrés Abarca, Kenneth Otárola, Ginés Suárez, Víctor Cardenas
 
 ---
 
-# 📑 Licencia
-
-Copyright© 2025. Banco Interamericano de Desarrollo ("BID"). Uso autorizado [AM-331-A3](https://github.com/andresabarca-atlas/BID-LECTool/blob/main/LICENSE.md)
-
 ## Limitación de responsabilidades
 
 El BID no será responsable, bajo circunstancia alguna, de daño ni indemnización, moral o patrimonial; directo o indirecto; accesorio o especial; o por vía de consecuencia, previsto o imprevisto, que pudiese surgir:
